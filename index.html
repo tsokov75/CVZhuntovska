@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CVZhuntovska – Куиз</title>
+  <style>
+    :root { --bg:#0f172a; --text:#e5e7eb; --muted:#9ca3af; --btn:#1f2937; --btnHover:#374151;
+            --green:#16a34a; --red:#dc2626; }
+    *{box-sizing:border-box} html,body{height:100%}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial;
+         background:radial-gradient(1200px 600px at 80% -10%,#1e293b 0%,#0f172a 60%);
+         color:var(--text);display:grid;place-items:center;padding:16px}
+    .app{width:100%;max-width:720px;background:rgba(255,255,255,.02);
+         border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px}
+    .header{display:flex;gap:12px;align-items:center;margin-bottom:16px}
+    .badge{background:rgba(37,99,235,.2);border:1px solid rgba(37,99,235,.5);color:#dbeafe;
+           padding:6px 10px;border-radius:999px;font-size:14px}
+    .progress{height:8px;width:100%;background:#0b1220;border:1px solid rgba(255,255,255,.08);
+              border-radius:999px;overflow:hidden;margin:8px 0 4px}
+    .progress>div{height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#22c55e);
+                  transition:width .3s ease}
+    .question{font-weight:700;font-size:clamp(18px,2.2vw,22px);line-height:1.3;margin:10px 0 16px}
+    .answers{display:grid;grid-template-columns:1fr;gap:10px}
+    @media (min-width:640px){.answers{grid-template-columns:1fr 1fr}}
+    .answer{border:1px solid rgba(255,255,255,.08);background:var(--btn);padding:14px;border-radius:12px;
+            cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .answer:hover{background:var(--btnHover)} .answer.disabled{cursor:default;opacity:.75}
+    .answer.correct{border-color:rgba(22,163,74,.6);background:rgba(22,163,74,.12)}
+    .answer.wrong{border-color:rgba(220,38,38,.6);background:rgba(220,38,38,.12)}
+    .meta{display:flex;justify-content:space-between;align-items:center;margin-top:14px;color:var(--muted);font-size:14px}
+    .footer{display:flex;gap:10px;justify-content:space-between;margin-top:16px}
+    button{border-radius:10px;padding:12px 14px;border:1px solid rgba(255,255,255,.1);background:#0b1220;
+           color:var(--text);cursor:pointer;font-weight:600}
+    .hidden{display:none !important} .score{margin-top:10px;font-size:18px}
+  </style>
+</head>
+<body>
+  <main class="app" role="application" aria-label="Куиз – избери верните отговори">
+    <div class="header">
+      <div class="badge" id="badge">Въпрос 1 от 3</div>
+      <div aria-live="polite" style="font-size:14px;color:var(--muted)">
+        Избери верните отговори (брой според въпроса)
+      </div>
+    </div>
+    <div class="progress" aria-hidden="true"><div id="progressBar"></div></div>
+    <div class="question" id="questionText">Зареждане…</div>
+    <div class="answers" id="answers" role="group" aria-label="Възможни отговори"></div>
+    <div class="meta">
+      <div>Избрани: <span id="pickedCount">0</span> / <span id="needCount">1</span></div>
+      <div>Точки: <span id="score">0</span></div>
+    </div>
+    <div class="footer">
+      <button id="resetBtn" type="button">Рестарт</button>
+      <button id="nextBtn" class="hidden" type="button">Следващ въпрос</button>
+    </div>
+    <div class="score hidden" id="finalBox"></div>
+  </main>
+
+  <script>
+    const QUESTIONS = [
+      { q: "С коя от посочените държави България не граничи?",
+        a: ["А: Румъния","Б: Йордания","В: Турция","Г: Гърция"], correct: [1] },
+      { q: "Коя е планината, която разделя България на Южна и Северна?",
+        a: ["А: Странджа","Б: Рила","В: Стара планина","Г: Плана"], correct: [2] },
+      { q: "Кой град е столица на България в днешно време?",
+        a: ["А: Велико Търново","Б: София","В: Плиска","Г: Преслав"], correct: [1] }
+    ];
+
+    const questionText=document.getElementById('questionText');
+    const answersEl=document.getElementById('answers');
+    const badge=document.getElementById('badge');
+    const progressBar=document.getElementById('progressBar');
+    const pickedCountEl=document.getElementById('pickedCount');
+    const needCountEl=document.getElementById('needCount');
+    const scoreEl=document.getElementById('score');
+    const nextBtn=document.getElementById('nextBtn');
+    const resetBtn=document.getElementById('resetBtn');
+    const finalBox=document.getElementById('finalBox');
+
+    let index=0,score=0,pickedCount=0,locked=false,selectedWrong=false;
+    let selected=new Set();
+
+    function updateProgress(){ const step=((index)/QUESTIONS.length)*100;
+      progressBar.style.width=step+'%'; badge.textContent=`Въпрос ${Math.min(index+1,QUESTIONS.length)} от ${QUESTIONS.length}`;
+    }
+    function renderQuestion(){
+      locked=false; selectedWrong=false; pickedCount=0; selected=new Set();
+      pickedCountEl.textContent='0'; nextBtn.classList.add('hidden'); finalBox.classList.add('hidden');
+      const q=QUESTIONS[index]; questionText.textContent=q.q; needCountEl.textContent=String(q.correct.length);
+      answersEl.innerHTML='';
+      q.a.forEach((text,i)=>{ const btn=document.createElement('button'); btn.className='answer'; btn.type='button'; btn.dataset.idx=i;
+        btn.innerHTML=`<span>${text}</span>`; btn.addEventListener('click',()=>handlePick(btn)); answersEl.appendChild(btn); });
+      updateProgress();
+    }
+    function handlePick(btn){
+      if(locked||btn.classList.contains('disabled')) return;
+      const q=QUESTIONS[index]; const realIdx=parseInt(btn.dataset.idx,10);
+      if(selected.has(realIdx)) return; selected.add(realIdx);
+      const isCorrect=q.correct.includes(realIdx);
+      pickedCount++; pickedCountEl.textContent=String(pickedCount);
+      btn.classList.add('disabled',isCorrect?'correct':'wrong');
+      if(!isCorrect) selectedWrong=true;
+      if(pickedCount>=q.correct.length){
+        document.querySelectorAll('.answer:not(.correct):not(.wrong)').forEach(b=>{
+          const idx=parseInt(b.dataset.idx,10);
+          if(q.correct.includes(idx)) b.classList.add('correct','disabled'); else b.classList.add('disabled');
+        });
+        if(!selectedWrong) score++; scoreEl.textContent=String(score); locked=true;
+        setTimeout(()=>nextBtn.classList.remove('hidden'),400);
+      }
+    }
+    function nextQuestion(){
+      if(index<QUESTIONS.length-1){ index++; renderQuestion(); }
+      else{
+        progressBar.style.width='100%'; badge.textContent='Готово!';
+        answersEl.innerHTML=''; questionText.textContent='Резултат';
+        finalBox.classList.remove('hidden');
+        finalBox.innerHTML=`Твоите точки: <strong>${score}</strong> от <strong>${QUESTIONS.length}</strong>.`+(score===QUESTIONS.length?' Браво! 🎉':'');
+        nextBtn.classList.add('hidden');
+      }
+    }
+    nextBtn.addEventListener('click', nextQuestion);
+    resetBtn.addEventListener('click', ()=>{ index=0; score=0; scoreEl.textContent='0'; renderQuestion(); });
+    renderQuestion();
+  </script>
+</body>
+</html>
