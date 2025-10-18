@@ -68,9 +68,16 @@
     .board th, .board td{ padding:8px 10px; border-bottom:1px solid #e5e7eb; text-align:left; }
     .board th{ background:#f8fafc; }
     .board .empty{ color:var(--muted); font-size:14px; padding:8px 0; }
+
+    /* Confetti canvas overlay */
+    #confettiCanvas{
+      position: fixed; inset: 0; pointer-events: none; z-index: 2;
+    }
   </style>
 </head>
 <body>
+  <canvas id="confettiCanvas"></canvas>
+
   <div class="sun"></div>
   <div class="balloon" style="--x:8%; --balloon-color:#60a5fa; --dur:16s;"></div>
   <div class="balloon" style="--x:16%; --balloon-color:#34d399; --dur:18s;"></div>
@@ -132,14 +139,42 @@
   </main>
 
   <script>
-    const BASE_QUESTIONS = [
-      { q: "С коя от посочените държави България не граничи?",
-        a: ["А: Румъния","Б: Йордания","В: Турция","Г: Гърция"], correct: [1] },
-      { q: "Коя е планината, която разделя България на Южна и Северна?",
-        a: ["А: Странджа","Б: Рила","В: Стара планина","Г: Плана"], correct: [2] },
-      { q: "Кой град е столица на България в днешно време?",
-        a: ["А: Велико Търново","Б: София","В: Плиска","Г: Преслав"], correct: [1] }
-    ];
+    // ---- Confetti (simple burst) ----
+    (function(){
+      const canvas = document.getElementById('confettiCanvas');
+      const ctx = canvas.getContext('2d');
+      function resize(){ canvas.width = innerWidth; canvas.height = innerHeight; }
+      addEventListener('resize', resize); resize();
+      let particles = [];
+      function burst(x=innerWidth/2, y=innerHeight/3){
+        const colors = ['#60a5fa','#34d399','#f472b6','#f59e0b','#a78bfa','#22c55e','#f87171'];
+        for(let i=0;i<120;i++){
+          const angle = Math.random()*Math.PI*2;
+          const speed = 3 + Math.random()*5;
+          particles.push({
+            x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2,
+            size: 2 + Math.random()*4, color: colors[Math.floor(Math.random()*colors.length)],
+            life: 60 + Math.random()*30
+          });
+        }
+      }
+      function tick(){
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        particles = particles.filter(p=> p.life>0);
+        for(const p of particles){
+          p.vy += 0.08; // gravity
+          p.x += p.vx; p.y += p.vy; p.life--;
+          ctx.fillStyle = p.color;
+          ctx.fillRect(p.x, p.y, p.size, p.size);
+        }
+        requestAnimationFrame(tick);
+      }
+      tick();
+      window.__confettiBurst = ()=> burst(innerWidth/2, innerHeight/4);
+    })();
+
+    // === Data from external JSON ===
+    let BASE_QUESTIONS = [];
     let QUESTIONS = [];
 
     // DOM
@@ -154,6 +189,7 @@
     const resetBtn = document.getElementById('resetBtn');
     const finalBox = document.getElementById('finalBox');
     const timerEl = document.getElementById('timer');
+    const helpText = document.getElementById('helpText');
 
     const boardContainer = document.getElementById('boardContainer');
     const saveScoreBtn = document.getElementById('saveScoreBtn');
@@ -248,8 +284,9 @@
     function renderQuestion(){
       locked=false; pickedCount=0;
       pickedCountEl.textContent='0'; nextBtn.classList.add('hidden'); finalBox.classList.add('hidden');
+      helpText.style.display = ""; helpText.textContent = "Маркирай верния отговор";
       const q = QUESTIONS[index];
-      questionText.textContent = q.q; document.getElementById('helpText').textContent = "Маркирай верния отговор";
+      questionText.textContent = q.q;
       needCountEl.textContent = String(q.correct.length);
       answersEl.innerHTML='';
       q.a.forEach((text,i)=>{
@@ -262,7 +299,6 @@
     function calcPoints(elapsedSec){ if (elapsedSec <= 5) return 3; if (elapsedSec <= 8) return 2; return 1; }
 
     function endQuestionImmediate(){
-      // deactivate all and show Next
       document.querySelectorAll('.answer').forEach(b=> b.classList.add('disabled'));
       stopQuestionTimer();
       locked = true;
@@ -275,22 +311,23 @@
       const realIdx = parseInt(btn.dataset.idx,10);
       const isCorrect = q.correct.includes(realIdx);
 
-      pickedCount = 1;
-      pickedCountEl.textContent = '1';
+      pickedCount = 1; pickedCountEl.textContent = '1';
       btn.classList.add('disabled', isCorrect ? 'correct' : 'wrong');
 
       if(isCorrect){
         const elapsed = (performance.now() - startTime) / 1000;
-        score += calcPoints(elapsed); scoreEl.textContent = String(score);
+        const pts = calcPoints(elapsed);
+        score += pts; scoreEl.textContent = String(score);
         playDing();
+        if (elapsed <= 5 && window.__confettiBurst) window.__confettiBurst();
         endQuestionImmediate();
       } else {
-        // Mark the correct answer as green as well
+        // Show correct in green
         document.querySelectorAll('.answer').forEach(b => {
           const idx = parseInt(b.dataset.idx, 10);
           if (q.correct.includes(idx)) b.classList.add('correct');
         });
-        document.getElementById('helpText').textContent = "Грешен отговор.";
+        helpText.textContent = "Грешен отговор.";
         playBuzz();
         endQuestionImmediate();
       }
@@ -301,6 +338,7 @@
       else {
         progressBar.style.width='100%'; badge.textContent='Готово!';
         answersEl.innerHTML=''; questionText.textContent='Резултат';
+        helpText.style.display = "none"; // hide messages at the end
         finalBox.classList.remove('hidden');
         finalBox.innerHTML = `Събрани точки: <strong>${score}</strong> (макс. ${QUESTIONS.length*3}).`;
         nextBtn.classList.add('hidden');
@@ -309,7 +347,32 @@
 
     nextBtn.addEventListener('click', nextQuestion);
     resetBtn.addEventListener('click', ()=>{ index=0; score=0; scoreEl.textContent='0'; resetDataShuffle(); renderQuestion(); });
-    resetDataShuffle(); renderQuestion(); renderBoard();
+
+    async function loadQuestions(){
+      try{
+        const res = await fetch('questions.json', {cache:'no-store'});
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        BASE_QUESTIONS = await res.json();
+      }catch(e){
+        // fallback minimal set if file missing
+        BASE_QUESTIONS = [
+          { q: "Резервен въпрос: Столица на България?",
+            a: ["А: София","Б: Пловдив","В: Варна","Г: Русе"], correct: [0] }
+        ];
+      }
+      resetDataShuffle(); renderQuestion(); renderBoard();
+    }
+
+    // Leaderboard initial render
+    function renderBoard(){
+      const data = (function(){ try{ return JSON.parse(localStorage.getItem('cvzhuntovska_board_v1') || '[]'); }catch{ return []; } })().sort((a,b)=> b.score - a.score);
+      if(data.length === 0){ boardContainer.innerHTML = '<div class="empty">Няма записани резултати.</div>'; return; }
+      const rows = data.map((r,i)=> `<tr><td>${i+1}</td><td>${escapeHtml(r.name)}</td><td>${r.score}</td><td>${new Date(r.time).toLocaleString()}</td></tr>`).join("");
+      boardContainer.innerHTML = `<table><thead><tr><th>#</th><th>Име</th><th>Точки</th><th>Време</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    // Start
+    loadQuestions();
   </script>
 </body>
 </html>
